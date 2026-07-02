@@ -119,7 +119,18 @@ class Tick:
 
 
 def fetch_latest_tick(connector: MT5Connector, symbol: str) -> Tick:
-    """Fetch the current bid/ask for `symbol` — used by the live bot loop."""
+    """
+    Fetch the current bid/ask for `symbol` — used by the live bot loop.
+
+    Timestamp decoding must match fetch_ohlc/fetch_ohlc_range exactly:
+    we decode the raw epoch with no local-timezone conversion, so tick
+    time and bar time are always comparable. Using datetime.fromtimestamp()
+    here (instead of utcfromtimestamp) previously applied the *system's*
+    local timezone on top of the epoch, silently shifting tick time
+    away from bar time by whatever offset the machine running this is
+    set to — a bug that showed up as tick time reading ~2 hours ahead
+    of the latest bar on a VPS set to UTC+2.
+    """
     mt5 = connector.mt5
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
@@ -127,7 +138,7 @@ def fetch_latest_tick(connector: MT5Connector, symbol: str) -> Tick:
         raise MT5ConnectionError(f"symbol_info_tick returned None for {symbol}: {error}")
 
     return Tick(
-        time=datetime.fromtimestamp(tick.time),
+        time=datetime.utcfromtimestamp(tick.time),
         bid=tick.bid,
         ask=tick.ask,
         last=tick.last,
