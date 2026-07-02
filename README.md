@@ -148,6 +148,30 @@ NOTHING about which strategy is actually good (random walks have no
 real trend, breakout, or mean-reversion structure). Never use those
 numbers to pick a strategy.
 
+## Getting more data and testing across pairs
+
+**1. Export more history across multiple pairs** — run on the VPS:
+```powershell
+python export_data.py
+```
+Edit `SYMBOLS` and `BAR_COUNT` at the top of that file first. Produces
+`data_export/<SYMBOL>_M15.csv` + `<SYMBOL>_meta.json` (pip size/value)
+per symbol. Note: MT5 may cap how many bars `copy_rates_from_pos`
+returns per call depending on your broker's history settings — if you
+get fewer bars than requested, that's a broker-side limit, not a bug.
+
+**2. Run the multi-pair leaderboard:**
+```powershell
+python -m validation.multi_pair_leaderboard --dir data_export
+```
+Prints the full metrics table per pair, then a summary matrix
+(strategy × pair → return %) and calls out the best-performing
+strategy on each pair — this is what surfaces "combos," e.g. if
+`combo_trend_confirmed_breakout` does best on EURUSD but
+`mean_reversion_rsi` does best on a range-bound pair like AUDUSD, that
+tells you these might warrant different treatment per instrument
+rather than picking one strategy for everything.
+
 ## What the leaderboard does NOT yet tell you
 
 A single backtest run on one historical window is step one, not the
