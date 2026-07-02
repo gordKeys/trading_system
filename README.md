@@ -7,13 +7,13 @@ Standard challenge. Python + MetaTrader5.
 
 ```
 config/          FTMO rules + settings — single source of truth   [DONE]
-risk/            Position sizing + FTMO rule enforcement          [DONE — 7/7 tests passing]
-data/            MT5 connection, symbol info, OHLC/tick fetching  [DONE — 8/8 tests passing]
-strategy/        Signal generation (pure, no risk/execution)      [DONE — 5/5 tests passing, example only]
-execution/       Live + backtest order execution                 [not yet built]
-validation/      Walkforward, Monte Carlo, performance stats      [not yet built]
+risk/            Position sizing + FTMO rule enforcement          [DONE — 7 tests]
+data/            MT5 connection, symbol info, OHLC/tick fetching  [DONE — 8 tests, live-verified]
+strategy/        Multiple candidate strategies                    [DONE — see below]
+execution/       Backtest executor (live executor not yet built)  [DONE — 5 tests]
+validation/      Metrics + leaderboard comparing all strategies   [DONE — 4 tests]
 orchestration/   Main loop, logging, alerts, kill switch          [not yet built]
-tests/           Sanity + unit tests
+tests/           49 tests total, all passing
 ```
 
 ## Data layer notes
@@ -30,16 +30,25 @@ tests/           Sanity + unit tests
   DataFrames with a fixed column schema so strategy code never needs
   to know it's talking to MT5 specifically.
 
-**Important — not yet resolved:** bar timestamps come back in MT5
-*server time*, not UTC, and this isn't converted yet. Before building
-any session-boundary-sensitive logic (e.g. "London open"), we need to
-pin down your broker's server UTC offset and DST behavior.
+**Resolved:** broker server clock measured at **UTC+3** on 2026-07-02
+(`check_server_offset.py`), consistent with EET summer time. This will
+almost certainly shift to **UTC+2** around late October when EU DST
+ends. `config/settings.py::BrokerServerClock` holds this value —
+**re-run `check_server_offset.py` after DST transitions and update it.**
+`data/broker_time.py` provides `broker_time_to_utc()` /
+`utc_to_broker_time()` for any strategy logic that needs real-world
+session boundaries (London open, NY open, etc.).
 
-**Untested against the real terminal.** Everything above is verified
-against a fake MT5 module in this sandbox (no real terminal available
-here). Run `python -m tests.test_data_layer` here for logic
-correctness, but do a manual smoke test on your machine — connect for
-real and fetch a few bars — before building strategy logic on top of it.
+**Bug fixed:** `fetch_latest_tick` originally used
+`datetime.fromtimestamp()`, which silently applied the local machine's
+timezone on top of the MT5 epoch — causing tick time to disagree with
+bar time by whatever offset the running machine happened to be set to
+(showed up as a 2-hour drift on the VPS). Fixed to decode the same way
+as bar timestamps; a regression test guards against this recurring.
+
+**Verified against the real terminal.** MT5 connection, symbol info,
+OHLC/tick fetching, and the server-time offset have all been confirmed
+against a live demo account on the VPS.
 
 ## Design principles
 
@@ -85,23 +94,80 @@ MT5_SERVER=YourBroker-Demo
 python -m tests.test_risk_manager
 ```
 
-## Strategy layer notes
+## Strategy candidates
 
-- `strategy/base.py` — the `Strategy` interface every strategy
-  implements: `generate_signal(ohlc_df) -> Signal`. Knows nothing about
-  account size, risk, or execution — same class runs unchanged in
-  backtest and live.
-- `strategy/sma_crossover_example.py` — a working example (SMA
-  crossover) that proves the interface end-to-end. **This is a
-  template, not a recommendation** — it's a well-known, generally
-  weak strategy on its own. Your actual trading hypothesis goes in a
-  new file implementing the same `Strategy` interface.
+Five strategies now implement the `Strategy` interface, all runnable
+through the same backtest/leaderboard pipeline:
+
+| Strategy | File | Hypothesis |
+|---|---|---|
+| `sma_crossover_example` | `strategy/sma_crossover_example.py` | Template only — not a real candidate |
+| `orb_breakout` | `strategy/orb_breakout.py` | Opening-range breakout at session start |
+| `trend_following_ma` | `strategy/trend_following_ma.py` | MA crossover confirmed by slope (filters whipsaws) |
+| `mean_reversion_rsi` | `strategy/mean_reversion_rsi.py` | RSI extreme reversal (no trend filter — will lose in strong trends by design) |
+| `combo_trend_confirmed_breakout` | `strategy/combo_trend_breakout.py` | ORB breakout, taken only when it agrees with the broader trend |
+
+**Note on statefulness:** `orb_breakout` and the combo strategy track
+per-day state (has this session already been traded) as instance
+state — a deliberate, documented exception to the "pure" guidance in
+`strategy/base.py`. Always construct a fresh instance per backtest run.
+
+## Backtest engine
+
+`execution/backtest_executor.py` replays a strategy bar-by-bar through
+the REAL `RiskManager` — not a simplified stand-in. Documented
+simplifications: single position at a time, fills at the signal's
+exact entry price (no slippage/spread modeling yet), and if a single
+bar's range touches both stop and take-profit, the stop is
+conservatively assumed to have triggered first.
+
+## Leaderboard — comparing strategies
+
+```bash
+python -m validation.leaderboard --csv path/to/EURUSD_M15.csv
+```
+
+Ranks every strategy on the same historical data by total return, and
+also reports win rate, max drawdown, profit factor, and how many
+signals the risk manager blocked.
+
+**Getting real historical data from your VPS:**
+```python
+from data.mt5_connector import MT5Connector
+from data.market_data import fetch_ohlc, Timeframe
+
+with MT5Connector() as conn:
+    df = fetch_ohlc(conn, "EURUSD", Timeframe.M15, count=5000)
+    df.to_csv("EURUSD_M15.csv")
+```
+Then copy that CSV here and run the leaderboard against it.
+
+**Without `--csv`**, the leaderboard runs against synthetic random-walk
+data — this only proves the pipeline doesn't crash. It tells you
+NOTHING about which strategy is actually good (random walks have no
+real trend, breakout, or mean-reversion structure). Never use those
+numbers to pick a strategy.
+
+## What the leaderboard does NOT yet tell you
+
+A single backtest run on one historical window is step one, not the
+final word — before trusting any result enough to trade it:
+- **Walkforward validation** — optimize on one period, test on the
+  next unseen one. Not built yet.
+- **Multiple market regimes** — trending vs ranging vs volatile
+  periods. A strategy that wins on 2026 H1 data might fail elsewhere.
+- **Realistic costs** — spread and slippage aren't modeled yet, which
+  matters most for the higher-frequency strategies (RSI mean-reversion
+  fired the most signals in early testing).
+- **Parameter sensitivity** — is the result robust to small parameter
+  changes, or a lucky fit to this exact config?
 
 ## Next step
 
-Decide on and implement your real trading hypothesis as a `Strategy`
-subclass, then build `execution/` (live + backtest executors sharing
-one interface) so we can actually run it against history.
+Pull real historical data from your VPS (see above) and run the
+leaderboard against it to get a real (not synthetic) ranking. Once we
+have real numbers, decide whether to refine the leading strategy,
+build walkforward validation, or start on the live executor.
 
 ## Git / GitHub
 
