@@ -45,5 +45,24 @@ class SafetyBuffers:
     max_concurrent_positions: int = 1
 
 
+@dataclass(frozen=True)
+class BrokerServerClock:
+    """
+    Offset between the broker's MT5 server clock and true UTC, in hours.
+
+    Measured empirically via check_server_offset.py on 2026-07-02: +3.
+    This is almost certainly EET summer time (most MT5 brokers run on
+    Cyprus-based servers following EU DST rules) — expect this to drop
+    to +2 around late October when EU daylight saving ends, and back
+    to +3 around late March. Re-run check_server_offset.py after any
+    DST transition and update this value; don't assume it's static
+    year-round.
+    """
+    utc_offset_hours: float = 3.0
+
+
+BROKER_SERVER_CLOCK = BrokerServerClock()
+
 MT5_SETTINGS = MT5Settings()
 SAFETY_BUFFERS = SafetyBuffers()
+

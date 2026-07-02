@@ -174,7 +174,16 @@ def test_fetch_latest_tick():
     tick = fetch_latest_tick(connector, "EURUSD")
     assert tick.bid == 1.1000
     assert tick.ask == 1.1002
-    print("PASS: fetch_latest_tick returns expected bid/ask")
+    # Regression guard: tick.time must decode the epoch the same way
+    # fetch_ohlc does (no local-timezone conversion). The fake tick uses
+    # epoch 1_700_000_000, which in UTC is 2023-11-14 22:13:20.
+    expected = datetime(2023, 11, 14, 22, 13, 20)
+    assert tick.time == expected, (
+        f"Expected {expected} (UTC decode), got {tick.time} — this is the "
+        f"exact bug where datetime.fromtimestamp() applied local timezone "
+        f"conversion, shifting tick time away from bar time."
+    )
+    print("PASS: fetch_latest_tick returns expected bid/ask and UTC-consistent timestamp")
 
 
 if __name__ == "__main__":
