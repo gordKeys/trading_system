@@ -193,6 +193,28 @@ strategy on each pair — this is what surfaces "combos," e.g. if
 tells you these might warrant different treatment per instrument
 rather than picking one strategy for everything.
 
+## Segmented (walkforward-style) validation
+
+```bash
+python -m validation.walkforward --csv data_export/USDJPY_M15.csv --strategy trend_following_ma --pip-size 0.01 --pip-value 6.21 --segments 5
+```
+
+Splits the historical data into N sequential, non-overlapping periods
+and runs the strategy independently on each (fresh instance, fresh
+$10k account per segment — no state or capital carries over). Answers
+a different question than the leaderboard: not "is this profitable
+overall" but "is it CONSISTENTLY profitable, or did the aggregate
+number come from one lucky stretch."
+
+**What this is NOT:** we have no parameter optimizer yet, so this
+doesn't re-fit parameters per segment — it's fixed-parameter,
+segmented out-of-sample testing, not full walkforward-with-
+reoptimization. Still the right next step before trusting any
+strategy's aggregate leaderboard number.
+
+Available `--strategy` names: `sma_crossover_example`, `orb_breakout`,
+`trend_following_ma`, `mean_reversion_rsi`, `combo_trend_confirmed_breakout`.
+
 ## What the leaderboard does NOT yet tell you
 
 A single backtest run on one historical window is step one, not the
