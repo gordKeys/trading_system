@@ -33,18 +33,27 @@ from strategy.mean_reversion_rsi import MeanReversionRSI
 from strategy.combo_trend_breakout import TrendConfirmedBreakout
 
 
-def build_strategies() -> list:
+def build_strategies(pip_size: float = 0.0001) -> list:
     """
     Fresh instance per strategy per run — some (ORB, combo) carry
     day-state and must never be reused across runs (see their docstrings).
+
+    pip_size MUST match the actual traded symbol (0.0001 for most pairs,
+    0.01 for JPY pairs) — strategies use it internally to convert
+    stop_pips/take-profit distances into real price distances. Passing
+    the wrong pip_size here silently produces garbage stop distances
+    (e.g. 100x too tight on JPY pairs if left at the EURUSD-style
+    default), which is exactly what happened before this was wired
+    through: every strategy looked catastrophic on USDJPY specifically
+    because their stops were computed at 1/100th the intended distance.
     """
     return [
-        SMACrossoverStrategy(fast_period=10, slow_period=30, stop_pips=20),
-        OpeningRangeBreakout(session_start_hour=11, range_minutes=30, bar_minutes=15),
-        TrendFollowingMA(fast_period=10, slow_period=30, slope_lookback=5, stop_pips=25),
-        MeanReversionRSI(rsi_period=14, oversold=30, overbought=70, stop_pips=20),
+        SMACrossoverStrategy(fast_period=10, slow_period=30, stop_pips=20, pip_size=pip_size),
+        OpeningRangeBreakout(session_start_hour=11, range_minutes=30, bar_minutes=15, pip_size=pip_size),
+        TrendFollowingMA(fast_period=10, slow_period=30, slope_lookback=5, stop_pips=25, pip_size=pip_size),
+        MeanReversionRSI(rsi_period=14, oversold=30, overbought=70, stop_pips=20, pip_size=pip_size),
         TrendConfirmedBreakout(session_start_hour=11, range_minutes=30, bar_minutes=15,
-                                trend_fast_period=10, trend_slow_period=30),
+                                trend_fast_period=10, trend_slow_period=30, pip_size=pip_size),
     ]
 
 
@@ -84,7 +93,7 @@ def run_leaderboard(
 ) -> list[PerformanceMetrics]:
     rm = RiskManager()
     results = []
-    for strategy in build_strategies():
+    for strategy in build_strategies(pip_size=pip_size):
         backtest_result = run_backtest(
             strategy=strategy,
             ohlc=ohlc,
@@ -116,6 +125,7 @@ if __name__ == "__main__":
     parser.add_argument("--csv", type=str, default=None, help="Path to a historical OHLC CSV (time,open,high,low,close)")
     parser.add_argument("--balance", type=float, default=10_000.0)
     parser.add_argument("--pip-value", type=float, default=10.0)
+    parser.add_argument("--pip-size", type=float, default=0.0001, help="Use 0.01 for JPY pairs, 0.0001 for most others")
     args = parser.parse_args()
 
     if args.csv:
@@ -127,5 +137,5 @@ if __name__ == "__main__":
         print("strategy is actually good. Export real MT5 history and re-run with --csv.\n")
         data = generate_synthetic_demo_data()
 
-    leaderboard = run_leaderboard(data, initial_balance=args.balance, pip_value_per_lot=args.pip_value)
+    leaderboard = run_leaderboard(data, initial_balance=args.balance, pip_value_per_lot=args.pip_value, pip_size=args.pip_size)
     print_leaderboard(leaderboard)

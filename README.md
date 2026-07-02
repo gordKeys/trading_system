@@ -46,6 +46,27 @@ bar time by whatever offset the running machine happened to be set to
 (showed up as a 2-hour drift on the VPS). Fixed to decode the same way
 as bar timestamps; a regression test guards against this recurring.
 
+**Second bug fixed (found via real multi-pair leaderboard results):**
+the multi-pair leaderboard correctly passed each pair's real pip size
+into the backtest engine's position sizing, but never passed it into
+the STRATEGIES themselves — which use it to convert `stop_pips` into a
+real price distance. Every strategy defaulted to `pip_size=0.0001`
+regardless of pair, ~100x too tight for JPY pairs (real pip size 0.01).
+This made every single strategy look catastrophic specifically on
+USDJPY — an artifact of the bug, not a real finding about that pair.
+Fixed in `validation/leaderboard.py::build_strategies()`; a regression
+test (`tests/test_leaderboard_pip_size.py`) proves a JPY-configured
+strategy produces a stop distance ~100x wider than a EUR-configured
+one, so this can't silently regress.
+
+**Reading multi-pair results correctly:** a result near **-8% paired
+with a large blocked-signal count is not "weak performance" — it means
+the strategy blew through the drawdown safety buffer (80% of FTMO's
+10% limit) partway through the test and got locked out of trading for
+the rest of it.** In real terms that's the FTMO challenge ending in
+failure, not a bad month. Always check the blocked count alongside
+return% before concluding anything from these tables.
+
 **Verified against the real terminal.** MT5 connection, symbol info,
 OHLC/tick fetching, and the server-time offset have all been confirmed
 against a live demo account on the VPS.
